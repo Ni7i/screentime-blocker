@@ -18,9 +18,16 @@ from pathlib import Path
 try:
     import rumps
 except ImportError:
-    print("Installiere rumps ...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "rumps"])
-    import rumps
+    sys.stderr.write(
+        "\nFehler: 'rumps' ist nicht installiert.\n"
+        "Bitte starte die App über 'Screentime.command' – das legt automatisch\n"
+        "eine virtuelle Umgebung an und installiert rumps darin.\n\n"
+        "Oder manuell:\n"
+        "  python3 -m venv .venv\n"
+        "  .venv/bin/pip install rumps\n"
+        "  .venv/bin/python menubar_app.py\n"
+    )
+    sys.exit(1)
 
 # --- Konfiguration ---
 APP_NAME = "Screentime"
