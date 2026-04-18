@@ -152,19 +152,22 @@ def _hosts_entries_for(domain: str) -> list[str]:
     return out
 
 
-# --- Hosts / Apps Operationen als Shell-Kommandos (für sudo) ---
-def build_block_script(sites: list[str], apps: list[str]) -> str:
-    # Hosts-Block aufbauen (mit IPv6 + DoH-Servern)
+def build_hosts_block_text(sites: list[str]) -> str:
+    """Erzeugt den kompletten /etc/hosts-Block für eine Liste an Domains."""
     lines = [MARKER_START]
     for d in sites:
         lines.extend(_hosts_entries_for(d))
-    # DoH-Server blocken – sonst bypasst der Browser /etc/hosts
     if sites:
         lines.append("# --- DoH blockieren (damit Browser nicht /etc/hosts umgehen) ---")
         for doh in DOH_SERVERS:
             lines.extend(_hosts_entries_for(doh))
     lines.append(MARKER_END)
-    block_text = "\n".join(lines)
+    return "\n".join(lines)
+
+
+# --- Hosts / Apps Operationen als Shell-Kommandos (für sudo) ---
+def build_block_script(sites: list[str], apps: list[str]) -> str:
+    block_text = build_hosts_block_text(sites)
 
     # Python-Daemon-Kommando
     py = sys.executable
@@ -189,12 +192,52 @@ def build_unblock_script() -> str:
 /usr/bin/sed -i '' '/{MARKER_START}/,/{MARKER_END}/d' {HOSTS_FILE} 2>/dev/null || true
 /usr/bin/dscacheutil -flushcache
 /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
+rm -f /tmp/screentime_restore.sh 2>/dev/null || true
+pkill -f screentime_restore.sh 2>/dev/null || true
 if [ -f {PID_FILE} ]; then
   PID=$(cat {PID_FILE})
   kill "$PID" 2>/dev/null || true
   rm -f {PID_FILE}
 fi
 pkill -f blocker_daemon.py 2>/dev/null || true
+"""
+    return cmd.strip()
+
+
+def build_exception_script(cfg: dict, minutes: int) -> str:
+    """Entfernt youtube.com aus dem Hosts-Block und plant automatische
+    Wiederherstellung nach `minutes` Minuten (läuft als root im Hintergrund).
+    """
+    seconds = minutes * 60
+    sites = cfg.get("sites", [])
+    sites_without_yt = [
+        s for s in sites
+        if s.strip().lower() not in ("youtube.com", "www.youtube.com")
+    ]
+    exception_block = build_hosts_block_text(sites_without_yt)
+    full_block = build_hosts_block_text(sites)
+
+    # Wiederherstellungsskript in /tmp (von Python geschrieben, läuft dann als root).
+    restore_path = "/tmp/screentime_restore.sh"
+    restore_content = f"""#!/bin/sh
+sleep {seconds}
+/usr/bin/sed -i '' '/{MARKER_START}/,/{MARKER_END}/d' {HOSTS_FILE} 2>/dev/null
+printf '\\n%s\\n' '{full_block}' >> {HOSTS_FILE}
+/usr/bin/dscacheutil -flushcache
+/usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
+rm -f "$0"
+"""
+    with open(restore_path, "w") as f:
+        f.write(restore_content)
+    os.chmod(restore_path, 0o755)
+
+    cmd = f"""
+/usr/bin/sed -i '' '/{MARKER_START}/,/{MARKER_END}/d' {HOSTS_FILE} 2>/dev/null || true
+printf '\\n%s\\n' '{exception_block}' >> {HOSTS_FILE}
+/usr/bin/dscacheutil -flushcache
+/usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
+pkill -f screentime_restore.sh 2>/dev/null || true
+nohup {restore_path} > /dev/null 2>&1 &
 """
     return cmd.strip()
 
@@ -209,6 +252,9 @@ class BlockerApp(rumps.App):
             None,
             "Blockieren",
             "Entsperren",
+            None,
+            "Ausnahme: Andalusi öffnen (30 Min)",
+            "Ausnahme-Link setzen",
             None,
             "Websites verwalten",
             "Apps verwalten",
@@ -293,6 +339,63 @@ class BlockerApp(rumps.App):
             osa_info("Blockierung aufgehoben. Alles ist wieder verfügbar.")
         else:
             osa_info("Entsperren fehlgeschlagen.")
+
+    @rumps.clicked("Ausnahme: Andalusi öffnen (30 Min)")
+    def on_exception(self, _):
+        cfg = load_cfg()
+        if not cfg.get("active"):
+            osa_info("Blockierung ist nicht aktiv. Erst 'Blockieren' klicken.")
+            return
+        yt_blocked = any(
+            s.strip().lower() in ("youtube.com", "www.youtube.com")
+            for s in cfg.get("sites", [])
+        )
+        if not yt_blocked:
+            osa_info("youtube.com ist nicht in deiner Blockliste — keine Ausnahme nötig.")
+            return
+
+        url = cfg.get("whitelist_url", "").strip()
+        if not url:
+            url = osa_dialog(
+                "Channel-Link von Muhammad Andalusi eingeben (wird gespeichert):",
+                default="https://www.youtube.com/@",
+            )
+            if not url:
+                return
+            cfg["whitelist_url"] = url.strip()
+            save_cfg(cfg)
+
+        code = osa_dialog("Code eingeben für 30-Min-Ausnahme:", hidden=True)
+        if code is None:
+            return
+        if hash_code(code) != cfg.get("code_hash"):
+            osa_info("Falscher Code.")
+            return
+
+        script = build_exception_script(cfg, 30)
+        if run_admin(script):
+            subprocess.run(["open", cfg["whitelist_url"]])
+            osa_info(
+                "YouTube für 30 Minuten freigeschaltet.\n\n"
+                f"Kanal wird geöffnet: {cfg['whitelist_url']}\n\n"
+                "Nach 30 Minuten wird YouTube automatisch wieder gesperrt."
+            )
+        else:
+            osa_info("Ausnahme konnte nicht aktiviert werden.")
+
+    @rumps.clicked("Ausnahme-Link setzen")
+    def on_set_exception_url(self, _):
+        cfg = load_cfg()
+        current = cfg.get("whitelist_url", "")
+        url = osa_dialog(
+            "Channel-Link (z. B. https://www.youtube.com/@MuhammadAndalusi):",
+            default=current or "https://www.youtube.com/@",
+        )
+        if url is None:
+            return
+        cfg["whitelist_url"] = url.strip()
+        save_cfg(cfg)
+        osa_info(f"Ausnahme-Link gespeichert:\n{cfg['whitelist_url'] or '(leer)'}")
 
     @rumps.clicked("Websites verwalten")
     def on_sites(self, _):
