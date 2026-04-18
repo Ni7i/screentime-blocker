@@ -63,35 +63,48 @@ def save_cfg(cfg: dict):
         json.dump(cfg, f, indent=2)
 
 
-def osa_dialog(prompt: str, default: str = "", hidden: bool = False, title: str = APP_NAME) -> str | None:
-    """Zeigt einen nativen macOS-Eingabedialog, gibt Text oder None zurück."""
+def _escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def osa_dialog(prompt: str, default: str = "", hidden: bool = False, title: str = APP_NAME):
+    """Zeigt einen nativen macOS-Eingabedialog (mit korrektem Fokus), gibt Text oder None zurück."""
     hidden_arg = " with hidden answer" if hidden else ""
+    # System Events aktivieren → Dialog bekommt Fokus, Tastatureingaben funktionieren
     script = (
-        f'display dialog "{prompt}" default answer "{default}" '
-        f'with title "{title}"{hidden_arg}'
+        'tell application "System Events"\n'
+        '  activate\n'
+        f'  set theResult to display dialog "{_escape(prompt)}" default answer "{_escape(default)}" '
+        f'with title "{_escape(title)}"{hidden_arg}\n'
+        '  return text returned of theResult\n'
+        'end tell'
     )
     res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     if res.returncode != 0:
         return None
-    # Rückgabe-Format: "button returned:OK, text returned:xxx"
-    out = res.stdout.strip()
-    if "text returned:" in out:
-        return out.split("text returned:", 1)[1].strip()
-    return ""
+    return res.stdout.strip()
 
 
 def osa_info(msg: str, title: str = APP_NAME):
-    subprocess.run([
-        "osascript", "-e",
-        f'display dialog "{msg}" with title "{title}" buttons {{"OK"}} default button "OK"'
-    ])
+    script = (
+        'tell application "System Events"\n'
+        '  activate\n'
+        f'  display dialog "{_escape(msg)}" with title "{_escape(title)}" '
+        'buttons {"OK"} default button "OK"\n'
+        'end tell'
+    )
+    subprocess.run(["osascript", "-e", script], capture_output=True)
 
 
 def osa_confirm(msg: str, title: str = APP_NAME) -> bool:
-    res = subprocess.run([
-        "osascript", "-e",
-        f'display dialog "{msg}" with title "{title}" buttons {{"Abbrechen","OK"}} default button "OK"'
-    ], capture_output=True, text=True)
+    script = (
+        'tell application "System Events"\n'
+        '  activate\n'
+        f'  display dialog "{_escape(msg)}" with title "{_escape(title)}" '
+        'buttons {"Abbrechen","OK"} default button "OK"\n'
+        'end tell'
+    )
+    res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     return res.returncode == 0 and "OK" in res.stdout
 
 
