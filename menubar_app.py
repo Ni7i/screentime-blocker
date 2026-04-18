@@ -106,17 +106,50 @@ def run_admin(shell_cmd: str) -> bool:
     return res.returncode == 0
 
 
+# Bekannte DNS-over-HTTPS Server, die /etc/hosts umgehen – auch blockieren,
+# damit Browser wie Chrome / Firefox / Safari nicht dran vorbei auflösen können.
+DOH_SERVERS = [
+    "dns.google",
+    "cloudflare-dns.com",
+    "mozilla.cloudflare-dns.com",
+    "chrome.cloudflare-dns.com",
+    "one.one.one.one",
+    "dns.quad9.net",
+    "doh.opendns.com",
+    "dns.nextdns.io",
+    "dns.adguard.com",
+]
+
+# Browser die wir beim Blockieren kurz neustarten, damit DNS-Cache weg ist.
+BROWSER_APPS = ["Google Chrome", "Safari", "Firefox", "Arc", "Brave Browser", "Microsoft Edge", "Opera"]
+
+
+def _hosts_entries_for(domain: str) -> list[str]:
+    """Gibt IPv4 + IPv6 Blockeinträge für eine Domain zurück (mit und ohne www.)."""
+    d = domain.strip().lower()
+    if not d:
+        return []
+    variants = [d]
+    if not d.startswith("www."):
+        variants.append(f"www.{d}")
+    out = []
+    for v in variants:
+        out.append(f"127.0.0.1 {v}")
+        out.append(f"::1 {v}")
+    return out
+
+
 # --- Hosts / Apps Operationen als Shell-Kommandos (für sudo) ---
 def build_block_script(sites: list[str], apps: list[str]) -> str:
-    # Hosts-Block aufbauen
+    # Hosts-Block aufbauen (mit IPv6 + DoH-Servern)
     lines = [MARKER_START]
     for d in sites:
-        d = d.strip().lower()
-        if not d:
-            continue
-        lines.append(f"127.0.0.1 {d}")
-        if not d.startswith("www."):
-            lines.append(f"127.0.0.1 www.{d}")
+        lines.extend(_hosts_entries_for(d))
+    # DoH-Server blocken – sonst bypasst der Browser /etc/hosts
+    if sites:
+        lines.append("# --- DoH blockieren (damit Browser nicht /etc/hosts umgehen) ---")
+        for doh in DOH_SERVERS:
+            lines.extend(_hosts_entries_for(doh))
     lines.append(MARKER_END)
     block_text = "\n".join(lines)
 
@@ -197,13 +230,23 @@ class BlockerApp(rumps.App):
 
         script = build_block_script(cfg.get("sites", []), cfg.get("apps", []))
         if run_admin(script):
+            # Alle Browser einmal schließen, damit DNS-Cache gelöscht wird.
+            # Sonst merken sie die Seite teilweise noch als erreichbar.
+            if cfg.get("sites"):
+                for b in BROWSER_APPS:
+                    subprocess.run(
+                        ["osascript", "-e", f'tell application "{b}" to quit'],
+                        capture_output=True,
+                    )
             cfg["active"] = True
             save_cfg(cfg)
             self.refresh_title()
             osa_info(
                 f"Blockierung aktiv.\n\n"
                 f"Websites: {', '.join(cfg['sites']) or '—'}\n"
-                f"Apps: {', '.join(cfg['apps']) or '—'}"
+                f"Apps: {', '.join(cfg['apps']) or '—'}\n\n"
+                f"Wichtig: Browser wurden geschlossen und DNS-Cache geleert.\n"
+                f"Falls eine Seite noch lädt: Browser neu starten."
             )
         else:
             osa_info("Aktivierung abgebrochen oder fehlgeschlagen.")
