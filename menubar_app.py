@@ -221,6 +221,16 @@ class BlockerApp(rumps.App):
 
     def refresh_title(self):
         cfg = load_cfg()
+        # Prüfen ob /etc/hosts tatsächlich unseren Block hat - State konsistent halten
+        hosts_has_block = False
+        try:
+            with open(HOSTS_FILE) as f:
+                hosts_has_block = MARKER_START in f.read()
+        except Exception:
+            pass
+        if cfg.get("active") and not hosts_has_block:
+            cfg["active"] = False
+            save_cfg(cfg)
         self.title = "🛑" if cfg.get("active") else "🛡"
         status = "AKTIV" if cfg.get("active") else "inaktiv"
         n_sites = len(cfg.get("sites", []))
