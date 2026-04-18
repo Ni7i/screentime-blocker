@@ -1,12 +1,17 @@
 #!/bin/bash
-# Baut die Menubar-App zu einer eigenständigen macOS .app mit py2app.
-# Ergebnis: dist/Screentime.app  (kann z.B. in /Applications gezogen werden)
-
+# Baut Screentime.app – eine echte macOS-App zum Doppelklicken.
+# Benutzt eine virtuelle Umgebung (PEP 668 sicher).
 set -e
 cd "$(dirname "$0")"
 
-echo "Installiere py2app & rumps ..."
-python3 -m pip install --user py2app rumps
+VENV=".venv-build"
+
+echo "==> Virtuelle Umgebung anlegen ..."
+python3 -m venv "$VENV"
+
+echo "==> py2app & rumps installieren ..."
+"$VENV/bin/pip" install --quiet --upgrade pip setuptools wheel
+"$VENV/bin/pip" install --quiet py2app rumps
 
 cat > setup.py <<'PY'
 from setuptools import setup
@@ -34,9 +39,13 @@ setup(
 )
 PY
 
-echo "Baue die App (kann 1–2 Minuten dauern) ..."
-python3 setup.py py2app
+echo "==> App bauen (kann 1–2 Min dauern) ..."
+rm -rf build dist
+"$VENV/bin/python" setup.py py2app
 
 echo ""
-echo "Fertig! App liegt in: $(pwd)/dist/Screentime.app"
-echo "Du kannst sie per Drag & Drop nach /Applications verschieben."
+echo "Fertig! Screentime.app liegt in: $(pwd)/dist/Screentime.app"
+echo ""
+echo "Installieren:"
+echo "  mv dist/Screentime.app /Applications/"
+echo "  open /Applications/Screentime.app"
