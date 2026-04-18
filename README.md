@@ -1,8 +1,8 @@
 # Screentime Blocker (macOS)
 
-Ein einfaches Python-Programm, mit dem du **Websites** (z. B. `youtube.com`) und **Apps** auf deinem Mac blockieren kannst. Entsperrt wird nur mit einem selbst festgelegten **Code**.
+Kleine **Menubar-App** für den Mac: blockiert **Websites** (z. B. `youtube.com`) und **Apps**. Entsperrt wird nur mit einem selbst festgelegten **Code**. Lebt als kleines Icon 🛡 oben rechts in der Menüleiste (wie BetterDisplay, 1Password etc.).
 
-> Für macOS. Nutzt `/etc/hosts` zum Blockieren von Websites und einen Hintergrund-Daemon, der blockierte Apps beim Start sofort wieder beendet.
+> Nutzt `/etc/hosts` zum Blockieren von Websites und einen Hintergrund-Daemon, der blockierte Apps beim Start sofort wieder beendet.
 
 ## Features
 - Websites blockieren (z. B. `youtube.com`, `instagram.com`, `tiktok.com`)
@@ -16,35 +16,39 @@ Ein einfaches Python-Programm, mit dem du **Websites** (z. B. `youtube.com`) und
 - Python 3 (ist auf modernen Macs vorinstalliert)
 - Administrator-Rechte (`sudo`), da `/etc/hosts` geändert wird
 
-## Installation
+## Schnellstart (einfach)
+
+**Variante A – mit Doppelklick starten:**
+1. Ordner öffnen, Doppelklick auf `Screentime.command`
+2. (Einmalig: installiert `rumps` automatisch)
+3. Oben rechts erscheint das Icon 🛡 → anklicken → alle Optionen im Menü
+
+**Variante B – richtige .app bauen (empfohlen):**
 ```bash
-git clone <repo-url>
 cd screentime-blocker
-chmod +x blocker.py
+bash build_app.sh
+open dist/Screentime.app
 ```
+Danach liegt eine eigenständige `Screentime.app` in `dist/`. Einfach nach `/Applications` ziehen.
+Um sie automatisch beim Login zu starten: **Systemeinstellungen → Allgemein → Anmeldeobjekte → Screentime hinzufügen**.
 
-## Nutzung
+## Nutzung über die Menubar
 
-### 1. Einrichten (Code, Websites, Apps festlegen)
-```bash
-python3 blocker.py setup
-```
-Du wirst nach einem Code sowie der Liste an Websites und Apps gefragt.
+Klick auf das 🛡-Icon → Menü mit:
 
-### 2. Blockierung aktivieren
-```bash
-sudo python3 blocker.py block
-```
+- **Status** – zeigt ob gerade blockiert wird
+- **Blockieren** – aktiviert die Sperre (macOS fragt nach Admin-Passwort)
+- **Entsperren** – fragt nach deinem Code und hebt alles auf
+- **Websites verwalten** – Liste komma-getrennt eingeben
+- **Apps verwalten** – Liste komma-getrennt eingeben
+- **Code ändern / einrichten** – neuer Entsperr-Code
+- **Beenden**
 
-### 3. Blockierung aufheben (mit Code)
-```bash
-sudo python3 blocker.py unblock
-```
+Alle Dialoge sind native macOS-Fenster – sehr einfach zu bedienen.
 
-### 4. Status anzeigen
-```bash
-python3 blocker.py status
-```
+## CLI (optional)
+
+Es gibt zusätzlich eine Kommandozeilen-Version `blocker.py` mit `setup`, `block`, `unblock`, `status`.
 
 ## Wie funktioniert das?
 

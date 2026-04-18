@@ -4,3 +4,7 @@ __pycache__/
 .DS_Store
 .screentime_blocker/
 *.log
+build/
+dist/
+setup.py
+*.egg-info/
