@@ -5,6 +5,7 @@ Kleines Icon oben rechts in der Menüleiste.
 Benötigt: rumps (wird beim ersten Start automatisch installiert).
 """
 
+import datetime
 import hashlib
 import json
 import os
@@ -38,7 +39,9 @@ LOG_FILE = CONFIG_DIR / "blocker.log"
 HOSTS_FILE = "/etc/hosts"
 MARKER_START = "# >>> SCREENTIME_BLOCKER START >>>"
 MARKER_END = "# <<< SCREENTIME_BLOCKER END <<<"
-HELPER_SCRIPT = Path(__file__).parent / "blocker_helper.sh"
+RESTORE_PLIST_LABEL = "com.screentime.blocker.restore"
+RESTORE_PLIST_PATH  = "/Library/LaunchDaemons/com.screentime.blocker.restore.plist"
+RESTORE_SCRIPT_PATH = "/tmp/screentime_restore.sh"
 
 
 # --- Helper ---
@@ -192,8 +195,8 @@ def build_unblock_script() -> str:
 /usr/bin/sed -i '' '/{MARKER_START}/,/{MARKER_END}/d' {HOSTS_FILE} 2>/dev/null || true
 /usr/bin/dscacheutil -flushcache
 /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
-rm -f /tmp/screentime_restore.sh 2>/dev/null || true
-pkill -f screentime_restore.sh 2>/dev/null || true
+/bin/launchctl unload {RESTORE_PLIST_PATH} 2>/dev/null || true
+/bin/rm -f {RESTORE_PLIST_PATH} {RESTORE_SCRIPT_PATH} 2>/dev/null || true
 if [ -f {PID_FILE} ]; then
   PID=$(cat {PID_FILE})
   kill "$PID" 2>/dev/null || true
@@ -205,39 +208,69 @@ pkill -f blocker_daemon.py 2>/dev/null || true
 
 
 def build_exception_script(cfg: dict, minutes: int) -> str:
-    """Entfernt youtube.com aus dem Hosts-Block und plant automatische
-    Wiederherstellung nach `minutes` Minuten (läuft als root im Hintergrund).
+    """Entfernt youtube.com aus dem Block und registriert einen launchd-Job,
+    der nach genau `minutes` Minuten automatisch wieder vollständig sperrt.
+    launchd ist zuverlässiger als nohup – überlebt auch App-Neustarts.
     """
-    seconds = minutes * 60
     sites = cfg.get("sites", [])
     sites_without_yt = [
         s for s in sites
         if s.strip().lower() not in ("youtube.com", "www.youtube.com")
     ]
     exception_block = build_hosts_block_text(sites_without_yt)
-    full_block = build_hosts_block_text(sites)
+    full_block      = build_hosts_block_text(sites)
 
-    # Wiederherstellungsskript in /tmp (von Python geschrieben, läuft dann als root).
-    restore_path = "/tmp/screentime_restore.sh"
+    # Restore-Skript (wird von launchd als root ausgeführt)
     restore_content = f"""#!/bin/sh
-sleep {seconds}
 /usr/bin/sed -i '' '/{MARKER_START}/,/{MARKER_END}/d' {HOSTS_FILE} 2>/dev/null
 printf '\\n%s\\n' '{full_block}' >> {HOSTS_FILE}
 /usr/bin/dscacheutil -flushcache
 /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
-rm -f "$0"
+/bin/launchctl unload {RESTORE_PLIST_PATH} 2>/dev/null || true
+/bin/rm -f {RESTORE_PLIST_PATH} "$0"
 """
-    with open(restore_path, "w") as f:
+    with open(RESTORE_SCRIPT_PATH, "w") as f:
         f.write(restore_content)
-    os.chmod(restore_path, 0o755)
+    os.chmod(RESTORE_SCRIPT_PATH, 0o755)
+
+    # launchd-Plist: feuert einmalig zur berechneten Uhrzeit
+    fire = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
+    plist_tmp = "/tmp/screentime_restore_job.plist"
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>             <string>{RESTORE_PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>{RESTORE_SCRIPT_PATH}</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>   <integer>{fire.hour}</integer>
+    <key>Minute</key> <integer>{fire.minute}</integer>
+  </dict>
+  <key>RunAtLoad</key> <false/>
+</dict>
+</plist>
+"""
+    with open(plist_tmp, "w") as f:
+        f.write(plist_content)
 
     cmd = f"""
 /usr/bin/sed -i '' '/{MARKER_START}/,/{MARKER_END}/d' {HOSTS_FILE} 2>/dev/null || true
 printf '\\n%s\\n' '{exception_block}' >> {HOSTS_FILE}
 /usr/bin/dscacheutil -flushcache
 /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
-pkill -f screentime_restore.sh 2>/dev/null || true
-nohup {restore_path} > /dev/null 2>&1 &
+/bin/launchctl unload {RESTORE_PLIST_PATH} 2>/dev/null || true
+/bin/rm -f {RESTORE_PLIST_PATH}
+/bin/cp {plist_tmp} {RESTORE_PLIST_PATH}
+/bin/chmod 644 {RESTORE_PLIST_PATH}
+/usr/sbin/chown root:wheel {RESTORE_PLIST_PATH}
+/bin/launchctl load {RESTORE_PLIST_PATH}
+/bin/rm -f {plist_tmp}
 """
     return cmd.strip()
 
