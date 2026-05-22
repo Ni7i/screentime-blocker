@@ -289,8 +289,9 @@ class BlockerApp(rumps.App):
             "Ausnahme: Andalusi öffnen (30 Min)",
             "Ausnahme-Link setzen",
             None,
-            "Websites verwalten",
-            "Apps verwalten",
+            "Website sperren...",
+            "Website freigeben... (Code)",
+            "Apps verwalten (Code)",
             "Code ändern / einrichten",
             None,
             "Über",
@@ -430,29 +431,85 @@ class BlockerApp(rumps.App):
         save_cfg(cfg)
         osa_info(f"Ausnahme-Link gespeichert:\n{cfg['whitelist_url'] or '(leer)'}")
 
-    @rumps.clicked("Websites verwalten")
-    def on_sites(self, _):
+    @rumps.clicked("Website sperren...")
+    def on_site_add(self, _):
+        """Neue Website sperren — kein Code nötig, nur hinzufügen."""
         cfg = load_cfg()
-        if cfg.get("active"):
-            osa_info("Bitte zuerst entsperren, um die Liste zu ändern.")
-            return
-        current = ", ".join(cfg.get("sites", []))
         value = osa_dialog(
-            "Websites zum Blockieren (Komma-getrennt):",
-            default=current or "youtube.com, instagram.com, tiktok.com",
+            "Website(s) sperren (Komma-getrennt):\nz. B.  facebook.com, reddit.com",
+            default="",
         )
-        if value is None:
+        if value is None or not value.strip():
             return
-        cfg["sites"] = [s.strip().lower() for s in value.split(",") if s.strip()]
+        new_sites = [s.strip().lower() for s in value.split(",") if s.strip()]
+        existing = cfg.get("sites", [])
+        added = [s for s in new_sites if s not in existing]
+        if not added:
+            osa_info("Diese Seiten sind bereits gesperrt.")
+            return
+        cfg["sites"] = existing + added
         save_cfg(cfg)
-        self.refresh_title()
-        osa_info(f"Gespeichert: {', '.join(cfg['sites']) or '(keine)'}")
+        # Sofort in /etc/hosts anwenden
+        if cfg.get("active"):
+            script = build_block_script(cfg["sites"], cfg.get("apps", []))
+            if run_admin(script):
+                for b in BROWSER_APPS:
+                    subprocess.run(
+                        ["osascript", "-e", f'tell application "{b}" to quit'],
+                        capture_output=True,
+                    )
+                self.refresh_title()
+                osa_info(f"Gesperrt: {', '.join(added)}\n\nAlle gesperrten Seiten:\n{', '.join(cfg['sites'])}")
+            else:
+                # Admin abgebrochen → aus config wieder entfernen
+                cfg["sites"] = existing
+                save_cfg(cfg)
+                osa_info("Abgebrochen. Keine Änderung.")
+        else:
+            self.refresh_title()
+            osa_info(f"Gespeichert: {', '.join(added)}\nWird beim nächsten 'Blockieren' aktiv.")
 
-    @rumps.clicked("Apps verwalten")
+    @rumps.clicked("Website freigeben... (Code)")
+    def on_site_remove(self, _):
+        """Website aus der Sperrliste entfernen — nur mit Entsperr-Code."""
+        cfg = load_cfg()
+        if not cfg.get("sites"):
+            osa_info("Keine Websites gesperrt.")
+            return
+        code = osa_dialog("Entsperr-Code eingeben:", hidden=True)
+        if code is None:
+            return
+        if hash_code(code) != cfg.get("code_hash"):
+            osa_info("Falscher Code.")
+            return
+        current_list = "\n".join(f"• {s}" for s in cfg["sites"])
+        value = osa_dialog(
+            f"Aktuell gesperrt:\n{current_list}\n\nWelche Website(s) freigeben? (Komma-getrennt)",
+            default="",
+        )
+        if value is None or not value.strip():
+            return
+        to_remove = [s.strip().lower() for s in value.split(",") if s.strip()]
+        new_sites = [s for s in cfg["sites"] if s not in to_remove]
+        if len(new_sites) == len(cfg["sites"]):
+            osa_info("Keine der angegebenen Seiten war in der Liste.")
+            return
+        cfg["sites"] = new_sites
+        save_cfg(cfg)
+        if cfg.get("active"):
+            script = build_block_script(cfg["sites"], cfg.get("apps", []))
+            run_admin(script)
+        self.refresh_title()
+        osa_info(f"Freigegeben: {', '.join(to_remove)}")
+
+    @rumps.clicked("Apps verwalten (Code)")
     def on_apps(self, _):
         cfg = load_cfg()
-        if cfg.get("active"):
-            osa_info("Bitte zuerst entsperren, um die Liste zu ändern.")
+        code = osa_dialog("Entsperr-Code eingeben:", hidden=True)
+        if code is None:
+            return
+        if hash_code(code) != cfg.get("code_hash"):
+            osa_info("Falscher Code.")
             return
         current = ", ".join(cfg.get("apps", []))
         value = osa_dialog(
