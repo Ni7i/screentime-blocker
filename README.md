@@ -34,7 +34,7 @@ Um sie automatisch beim Login zu starten: **Systemeinstellungen → Allgemein �
 
 ## Nutzung über die Menubar
 
-Klick auf das 🛡-Icon → Menü mit:
+Klick auf das → Menü mit:
 
 - **Status** – zeigt ob gerade blockiert wird
 - **Blockieren** – aktiviert die Sperre (macOS fragt nach Admin-Passwort)
